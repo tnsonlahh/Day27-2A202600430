@@ -1,8 +1,4 @@
-"""Thin wrapper around the GitHub REST API.
-
-We talk to GitHub directly via `httpx` instead of shelling out to `gh`, so
-students don't need a `gh` binary — just `GITHUB_TOKEN` in `.env`.
-"""
+"""Thin wrapper around the real GitHub REST API."""
 
 from __future__ import annotations
 
@@ -32,34 +28,42 @@ class PullRequest:
     files_changed: list[str]
 
 
-def _token() -> str:
-    tok = os.environ.get("GITHUB_TOKEN")
-    if not tok:
+def _token(required: bool = False) -> str | None:
+    token = os.environ.get("GITHUB_TOKEN")
+    if required and not token:
         raise RuntimeError(
-            "GITHUB_TOKEN is not set. Copy .env.example to .env and paste a Personal "
-            "Access Token (https://github.com/settings/tokens/new) with `public_repo` scope."
+            "GITHUB_TOKEN is not set. Public PRs can be read without a token, "
+            "but posting review comments requires a Personal Access Token with "
+            "public_repo scope."
         )
-    return tok
+    return token
 
 
-def _headers(accept: str = "application/vnd.github+json") -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {_token()}",
+def _headers(
+    accept: str = "application/vnd.github+json",
+    *,
+    require_token: bool = False,
+) -> dict[str, str]:
+    headers = {
         "Accept": accept,
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "Day27-HITL-Lab",
     }
+    token = _token(required=require_token)
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def parse_pr_url(pr_url: str) -> tuple[str, str, int]:
-    m = PR_URL_RE.search(pr_url)
-    if not m:
+    match = PR_URL_RE.search(pr_url)
+    if not match:
         raise ValueError(f"Not a PR URL: {pr_url}")
-    return m.group(1), m.group(2), int(m.group(3))
+    return match.group(1), match.group(2), int(match.group(3))
 
 
 def fetch_pr(pr_url: str) -> PullRequest:
-    """Fetch PR metadata + unified diff via the GitHub REST API."""
+    """Fetch PR metadata + unified diff via the real GitHub REST API."""
     owner, repo, number = parse_pr_url(pr_url)
     base = f"{API}/repos/{owner}/{repo}/pulls/{number}"
 
@@ -69,14 +73,15 @@ def fetch_pr(pr_url: str) -> PullRequest:
         meta = meta_resp.json()
 
         diff_resp = client.get(
-            base, headers=_headers(accept="application/vnd.github.v3.diff")
+            base,
+            headers=_headers(accept="application/vnd.github.v3.diff"),
         )
         diff_resp.raise_for_status()
         diff = diff_resp.text
 
         files_resp = client.get(f"{base}/files", headers=_headers())
         files_resp.raise_for_status()
-        files = [f["filename"] for f in files_resp.json()]
+        files = [file["filename"] for file in files_resp.json()]
 
     return PullRequest(
         url=pr_url,
@@ -94,16 +99,13 @@ def fetch_pr(pr_url: str) -> PullRequest:
 
 
 def post_review_comment(pr_url: str, body: str) -> None:
-    """Post a top-level discussion comment back to the PR.
-
-    Uses the Issues endpoint (PRs are issues under the hood for top-level
-    comments). For formal Approve/Request-changes use the Reviews endpoint
-    instead — which requires collaborator status on the target repo.
-
-    Takes the PR URL directly so callers don't need a `PullRequest` object.
-    """
+    """Post a real top-level discussion comment back to the PR."""
     owner, repo, number = parse_pr_url(pr_url)
     url = f"{API}/repos/{owner}/{repo}/issues/{number}/comments"
     with httpx.Client(timeout=30.0) as client:
-        resp = client.post(url, headers=_headers(), json={"body": body})
+        resp = client.post(
+            url,
+            headers=_headers(require_token=True),
+            json={"body": body},
+        )
         resp.raise_for_status()

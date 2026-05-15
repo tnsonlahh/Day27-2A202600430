@@ -26,4 +26,5 @@ Thumbs.db
 # Local audit DB exports / scratch
 *.sqlite
 *.db
+*.log
 scratch/

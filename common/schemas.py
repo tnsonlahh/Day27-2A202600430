@@ -125,6 +125,8 @@ class ReviewState(TypedDict, total=False):
 
     # Populated by analyze
     analysis: PRAnalysis
+    initial_confidence: float | None
+    initial_confidence_reasoning: str | None
 
     # Populated by route_by_confidence
     decision: Decision
